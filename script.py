@@ -1,51 +1,82 @@
+import logging
 import cv2
-import numpy as np
-import tensorflow as tf
-import torch
-from sklearn.metrics.pairwise import cosine_similarity
+from ultralytics import YOLO
+from deepface import DeepFace
 
-model = torch.hub.load('ultralytics/yolov8', 'yolov8n')
+logging.getLogger('ultralytics').setLevel(logging.WARNING)
+model = YOLO('yolov8n.pt')
 
-efficientnet_b0 = tf.keras.applications.EfficientNetB0(weights='imagenet', include_top=False, input_shape=(224, 224, 3), pooling='avg')
+video_path = input("Masukkan Direktori Video: ")
+reference_img1_path = input("Masukkan Direktori Foto Wajah 1: ")
+reference_img2_path = input("Masukkan Direktori Foto Wajah 2:")
 
-def extract_face_features(face_img):
-    face_img = cv2.resize(face_img, (224, 224))
-    face_img = tf.keras.applications.efficientnet.preprocess_input(face_img)
-    face_img = np.expand_dims(face_img, axis=0)
-    features = efficientnet_b0.predict(face_img)
-    return features
+def seconds_to_hms(seconds):
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    seconds = int(seconds % 60)
+    return f"{hours:02}:{minutes:02}:{seconds:02}"
 
-def compare_faces(reference_features, detected_features, threshold=0.7):
-    similarity = cosine_similarity(reference_features, detected_features)
-    return similarity[0][0] > threshold
-
-reference_img = cv2.imread('foto.png')
-reference_features = extract_face_features(reference_img)
-
-video_path = 'video.mp4'
 cap = cv2.VideoCapture(video_path)
 
 fps = cap.get(cv2.CAP_PROP_FPS)
 frame_count = 0
 
+skip_frames = int(fps)
+
+if not cap.isOpened():
+    print("Error: Video tidak bisa dibuka.")
+    exit()
+
 while cap.isOpened():
     ret, frame = cap.read()
+    
     if not ret:
+        print("Video selesai.")
         break
 
-    results = model(frame)
-    detections = results.xyxy[0].cpu().numpy() 
-    for detection in detections:
-        x1, y1, x2, y2, confidence, class_id = detection
-        if class_id == 0:
-            face_img = frame[int(y1):int(y2), int(x1):int(x2)]
-            detected_features = extract_face_features(face_img)
-            
-            if compare_faces(reference_features, detected_features):
-                timestamp = frame_count / fps
-                print(f"Matching face found at: {int(timestamp // 60)}:{int(timestamp % 60)}")
+    if frame_count % skip_frames == 0:
+        results = model(frame)
 
+        for result in results:
+            boxes = result.boxes
+
+            for box in boxes:
+                x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                
+                confidence = box.conf[0].cpu().numpy()
+                class_id = box.cls[0].cpu().numpy()
+
+                if class_id == 0 and confidence > 0.5:
+                    face_img = frame[int(y1):int(y2), int(x1):int(x2)]                    
+                    face_img = cv2.resize(face_img, (224, 224))
+                    
+                    detected_face_path = 'detected_face.jpg'
+                    cv2.imwrite(detected_face_path, face_img)
+                    
+                    result1 = DeepFace.verify(img1_path=reference_img1_path, img2_path=detected_face_path, enforce_detection=False)
+                    
+                    label = None
+                    if result1['verified']:
+                        label = "Wajah 1"
+                    if reference_img2_path:
+                        result2 = DeepFace.verify(img1_path=reference_img2_path, img2_path=detected_face_path, enforce_detection=False)
+                        if result2['verified']:
+                            label = "Wajah 2"
+                    
+                    if label:
+                        timestamp_seconds = frame_count / fps
+                        timestamp_hms = seconds_to_hms(timestamp_seconds)
+                        print(f"{label} ditemukan pada waktu: {timestamp_hms}")
+                        
+                        cv2.putText(frame, f"{label} pada: {timestamp_hms}", (int(x1), int(y1) - 10), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                        cv2.imshow("Wajah Cocok Ditemukan", frame)
+    cv2.imshow("Video Processing", frame)
     frame_count += 1
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        print("Pengguna keluar dari video.")
+        break
 
 cap.release()
 cv2.destroyAllWindows()
+
+print("Program selesai.")
