@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Face Detection (YOLOv8 & Flask)</title>
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 min-h-screen flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
+
+    <div class="w-3/4 max-w-screen-lg space-y-8 bg-white p-8 rounded-xl shadow-lg">
+        <h1 class="text-3xl font-extrabold text-center text-gray-900">Real-Time Face Detection</h1>
+        <p class="text-center text-gray-500 mb-6">Upload video dan gambar referensi wajah untuk memulai deteksi real-time</p>
+        <form id="uploadForm" action="/upload" method="post" enctype="multipart/form-data" class="space-y-6">
+            <div>
+                <label for="video" class="block text-sm font-medium text-gray-700">Pilih Video:</label>
+                <input type="file" name="video" accept="video/*" required class="mt-1 block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-100 file:text-indigo-700 hover:file:bg-indigo-200">
+            </div>
+            
+            <div>
+                <label for="img1" class="block text-sm font-medium text-gray-700">Pilih Gambar Referensi Wajah 1:</label>
+                <input type="file" name="img1" accept="image/*" required class="mt-1 block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-100 file:text-indigo-700 hover:file:bg-indigo-200">
+            </div>
+
+            <div>
+                <label for="name1" class="block text-sm font-medium text-gray-700">Nama Wajah 1:</label>
+                <input type="text" name="name1" placeholder="Face 1" value="Face 1" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
+            </div>
+            
+            <div>
+                <label for="img2" class="block text-sm font-medium text-gray-700">Pilih Gambar Referensi Wajah 2 (Opsional):</label>
+                <input type="file" name="img2" accept="image/*" class="mt-1 block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-100 file:text-indigo-700 hover:file:bg-indigo-200">
+            </div>
+
+            <div>
+                <label for="name2" class="block text-sm font-medium text-gray-700">Nama Wajah 2 (Opsional):</label>
+                <input type="text" name="name2" placeholder="Face 2" value="Face 2" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
+            </div>
+
+            <div>
+                <label for="interval" class="block text-sm font-medium text-gray-700">Interval Tangkap Frame:</label>
+                <input type="number" id="interval" name="interval" placeholder="Masukkan angka" required class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
+            </div>
+
+            <div>
+                <label for="interval_unit" class="block text-sm font-medium text-gray-700">Unit Interval (Jumlah frame yang ditangkap per (Detik / Menit)):</label>
+                <select id="interval_unit" name="interval_unit" required class="mt-1 block w-full px-3 py-2 border border-gray-300 bg-white rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
+                    <option value="seconds">Detik</option>
+                    <option value="minutes">Menit</option>
+                </select>
+            </div>
+
+            <div>
+                <input type="submit" id="uploadBtn" value="Unggah" class="w-full bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700">
+            </div>
+        </form>
+
+        <div id="feedback" class="text-center text-sm font-bold text-green-600"></div>
+        <h2 class="text-xl font-semibold text-gray-800 mt-8">Detected Timestamps, Names, and Faces</h2>
+        <ul id="timestamps" class="space-y-4 max-h-96 overflow-y-auto">
+        </ul>
+    </div>
+
+    <script>
+        $('#uploadForm').submit(function(event) {
+            event.preventDefault();
+            var formData = new FormData(this);
+            $('#uploadBtn').prop('disabled', true).val('Proses Berjalan...');
+            $('#feedback').text('Proses deteksi sedang berjalan, silakan tunggu...');
+
+            fetch('/upload', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.text())
+            .then(data => {
+                console.log("Files and names uploaded successfully. Starting real-time processing...");
+
+                startListeningForTimestampsNamesAndImages();
+            })
+            .catch(error => {
+                console.error('Error during upload:', error);
+                $('#uploadBtn').prop('disabled', false).val('Unggah');
+                $('#feedback').text('Terjadi kesalahan saat mengunggah file.');
+            });
+        });
+
+        function startListeningForTimestampsNamesAndImages() {
+            const eventSource = new EventSource('/process');
+            eventSource.onmessage = function(event) {
+                if (event.data === "Processing finished") {
+                    console.log("Video processing finished.");
+                    eventSource.close();
+                    
+                    $('#uploadBtn').prop('disabled', false).val('Unggah');
+                    $('#feedback').text('Proses selesai! Anda dapat mengunggah lagi.');
+                } else {
+                    const [timestamp, name, base64RefImage, base64DetectedImage] = event.data.split('||');
+                    const listItem = `
+                        <li class="bg-white p-4 rounded-lg shadow-md">
+                            <div class="font-medium text-gray-800">${timestamp} - ${name}</div>
+                            <div class="flex space-x-4 mt-2">
+                                <img src="data:image/jpeg;base64,${base64RefImage}" alt="Reference Image" class="w-24 h-24 object-cover rounded-md">
+                                <img src="data:image/jpeg;base64,${base64DetectedImage}" alt="Detected Face" class="w-24 h-24 object-cover rounded-md">
+                            </div>
+                        </li>`;
+                    $('#timestamps').append(listItem);
+                }
+            };
+        }
+    </script>
+
+</body>
+</html>
